@@ -43,7 +43,7 @@ class Node:
     self._attributes = dict()
     self._visible = True
   def __str__(self):
-    return self.text
+    return self._text
   # getters
   def text(self):
     return self._text;
@@ -174,11 +174,12 @@ class Parser:
       match = self.noderegex.fullmatch(line)
       if not match:
         raise InvalideSyntaxError()
-      indent = match.group('indent')
+      indent = len(match.group('indent'))
       text = match.group('text')
       node = self._nodefn(text)
+      print(node, indent)
       while self._stack and self._stack[-1][1] >= indent:
-        self._stack.pop()
+        n, i = self._stack.pop()
       if self._stack:
         parent, _ = self._stack[-1]
         self._edgefn(parent, node)
@@ -188,8 +189,9 @@ class Parser:
     if len(roots) > 1 and self._singleroot:
       pseudoroot = self._nodefn(self._singleroot)
       for root in roots:
+        print(root)
         self._edgefn(pseudoroot, root);
-      return pseudoroot
+      return [pseudoroot]
     return roots
 
 class GraphvizBackend:
