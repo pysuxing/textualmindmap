@@ -199,10 +199,19 @@ class GVNode(Node):
     self._attrs = kwargs
     self._edgeattrs = dict()
     self._group=None
+    self._targets = []
+    index = self._text.find('--')
+    if index != -1:
+      self._targets = [(t.strip(), {}) for t in self._text[index+2:].split('||')]
+      self._text = self._text[0:index].strip()
   def attr(self, **kwargs):
     self._attrs.update(kwargs)
   def edgeattr(self, **kwargs):
     self._edgeattrs.update(kwargs)
+  def targetiter(self):
+    return iter(self._targets)
+  def addtarget(self, node):
+    self._targets.append(node)
 class GVGroup(Node):
   def __init__(self, name, **kwargs):
     super().__init__(name)
@@ -231,7 +240,7 @@ class GraphvizBackend:
     self._grouproot = GVGroup('grouproot', **kwargs)
     self._passes = []
     self._identifiednodes = dict()
-    self.linkpredicate = lambda n: 'link' in n.tags()
+    self.linkpredicate = lambda _: False
     self.nodenamefn = Node.text
     self.extraedgeattrs = dict(weight='0.01', style='dashed', color='red')
   # grouping
@@ -250,6 +259,46 @@ class GraphvizBackend:
   def groupsubtree(self, node, name=None, parent=None, **kwargs):
     return self.group(node.dfsiter(), name, parent, **kwargs)
 
+  # collect node identifier op
+  def collectnodeidop(self, node):
+    if node.identified():
+      if node.identifier() in self._identifiednodes:
+        raise RedefinedIdentifierError(node.identifier())
+      self._identifiednodes[node.identifier()] = node
+  # collect link  op
+  def collectlinkop(self, node):
+    if not self.linkpredicate(node):
+      return
+    if node._children:
+      raise LinkNodeError(node)
+    node.parent().addtarget((node.text(), node._edgeattrs))
+    node.detach(update=True)
+  # resolve link op
+  def _resolvelinkbytext(self, targetname, fullmatch=True):
+    if fullmatch:
+      matched = [n for n in self._root.dfsiter() if n.text() == targetname]
+    else:
+      matched = [n for n in self._root.dfsiter() if n.text.startswith(targetname)]
+    if not matched:
+      return None
+    if len(matched) > 1:
+      raise AmbitiousTargetError(node.text())
+    return matched[0]
+  def resolvelinkop(self, node):
+    assert not self.linkpredicate(node)
+    targetnodes = []
+    for targetname, targetattrs in node.targetiter():
+      target = None
+      if targetname in self._identifiednodes:
+        target = self._identifiednodes[targetname]
+      else:
+        target = self._resolvelinkbytext(targetname, fullmatch=True)
+        if not target:
+          target = self._resolvelinkbytext(targetname, fullmatch=False)
+      if not target:
+        raise UndefinedIdentifierError(node.text())
+      targetnodes.append((target, targetattrs))
+    node._targets = targetnodes
   # group node op
   def groupnodeop(self, node):
     if not node._group:
@@ -260,8 +309,7 @@ class GraphvizBackend:
     group._graph.attr(**group._groupattrs)
   # render node opeartion
   def rendernodeop(self, node):
-    if self.linkpredicate(node):
-      return
+    assert not self.linkpredicate(node)
     name = self.nodenamefn(node)
     label = None
     if not self.nodenamefn is Node.text:
@@ -274,43 +322,32 @@ class GraphvizBackend:
       group.parent()._graph.subgraph(group._graph)
   # render edge operation
   def renderedgeop(self, node):
-    if not node.parent() or self.linkpredicate(node):
+    assert not self.linkpredicate(node)
+    if not node.parent():
       return
     parent = node.parent()
     headname = self.nodenamefn(node)
     tailname = self.nodenamefn(parent)
     # add edge to the root graph
     self._grouproot._graph.edge(tailname, headname, **node._edgeattrs)
-  # collect node identifier op
-  def collectnodeidop(self, node):
-    if node.identified():
-      if node.identifier() in self._identifiednodes:
-        raise RedefinedIdentifierError(node.identifier())
-      self._identifiednodes[node.identifier()] = node
   # extra edge operation
   def extraedgeop(self, node):
-    if not node.parent() or not self.linkpredicate(node):
-      return
-    if node.text() not in self._identifiednodes:
-      raise UndefinedIdentifierError(node.text())
-    if node._children:
-      raise LinkNodeError(node)
-    tail = node.parent()
-    head = self._identifiednodes[node.text()]
-    tailname = self.nodenamefn(tail)
-    headname = self.nodenamefn(head)
-    # add edge to the root graph
-    attrs = self.extraedgeattrs.copy()
-    attrs.update(node._edgeattrs)
-    self._grouproot._graph.edge(tailname, headname, **attrs)
+    tailname = self.nodenamefn(node)
+    for target, edgeattrs in node.targetiter():
+      headname = self.nodenamefn(target)
+      attrs = self.extraedgeattrs.copy()
+      attrs.update(edgeattrs)
+      self._grouproot._graph.edge(tailname, headname, **attrs)
 
   def _populatestdpasses(self):
+    self._passes.append((self.collectnodeidop, self._root.dfsiter()))
+    self._passes.append((self.collectlinkop, self._root.dfsiter()))
+    self._passes.append((self.resolvelinkop, self._root.dfsiter()))
     self._passes.append((self.groupnodeop, self._root.dfsiter()))
     self._passes.append((self.creategraphop, self._grouproot.dfsiter()))
     self._passes.append((self.rendernodeop, self._root.dfsiter()))
     self._passes.append((self.assemblegraphop, self._grouproot.postdfsiter()))
     self._passes.append((self.renderedgeop, self._root.dfsiter()))
-    self._passes.append((self.collectnodeidop, self._root.dfsiter()))
     self._passes.append((self.extraedgeop, self._root.dfsiter()))
   def render(self):
     self._populatestdpasses()
