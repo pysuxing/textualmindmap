@@ -5,21 +5,11 @@ import graphviz as gv
 class InvalideSyntaxError(Exception):
   def __str__(self):
     return 'Invalide node specification'
-class UndefinedIdentifierError(Exception):
-  def __init__(self, identifier):
-    self._identifier = identifier
-  def __str__(self):
-    return 'Undefined identifier ' + self._identifier
 class RedefinedIdentifierError(Exception):
   def __init__(self, identifier):
     self._identifier = identifier
   def __str__(self):
     return 'Redefined identifier ' + self._identifier
-class AnonymousAttributeError(Exception):
-  def __init__(self, node):
-    self._node = node
-  def __str__(self):
-    return str(node)
 
 class Node:
   tmmpattern = r'''
@@ -187,11 +177,16 @@ class NonuniqueGroupError(Exception):
     self._node = node
   def __str__(self):
     return 'Nonunique groups for node ' + str(node)
-class LinkNodeError(Exception):
+class TargetNodeError(Exception):
   def __init__(self, node):
     self._node = node
   def __str__(self):
     return 'Invalide link node ' + str(node)
+class UnresolvedTargetError(Exception):
+  def __init__(self, targetname):
+    self._targetname = targetname
+  def __str__(self):
+    return 'Unresolved target ' + self._targetname
 
 class GVNode(Node):
   def __init__(self, text, **kwargs):
@@ -270,7 +265,7 @@ class GraphvizBackend:
     if not self.linkpredicate(node):
       return
     if node._children:
-      raise LinkNodeError(node)
+      raise TargetNodeError(node)
     node.parent().addtarget((node.text(), node._edgeattrs))
     node.detach(update=True)
   # resolve link op
@@ -296,7 +291,7 @@ class GraphvizBackend:
         if not target:
           target = self._resolvelinkbytext(targetname, fullmatch=False)
       if not target:
-        raise UndefinedIdentifierError(node.text())
+        raise UnresolvedTargetError(targetname)
       targetnodes.append((target, targetattrs))
     node._targets = targetnodes
   # group node op
